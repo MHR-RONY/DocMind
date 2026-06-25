@@ -206,3 +206,26 @@ export const resetPassword = async (
   user.refreshToken = undefined;
   await user.save();
 };
+
+/**
+ * Loads the currently-authenticated user's API-safe profile. Secrets are
+ * stripped at the query layer as defense in depth.
+ *
+ * @throws ApiError.notFound if the user no longer exists.
+ * @throws ApiError.forbidden if the account has since been blocked.
+ */
+export const getMe = async (userId: string): Promise<SafeUser> => {
+  const user = await User.findById(userId)
+    .select('-password -refreshToken')
+    .exec();
+
+  if (user === null) {
+    throw ApiError.notFound('User not found');
+  }
+
+  if (user.isBlocked) {
+    throw ApiError.forbidden('Account is blocked');
+  }
+
+  return toSafeUser(user);
+};
