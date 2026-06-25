@@ -1,5 +1,5 @@
 import { randomUUID } from 'crypto';
-import pdfParse from 'pdf-parse';
+import pdfParse from 'pdf-parse/lib/pdf-parse.js';
 import mammoth from 'mammoth';
 import { DocumentModel, IDocumentDocument } from '../models/Document.model';
 import { ApiError } from '../utils/ApiError';
