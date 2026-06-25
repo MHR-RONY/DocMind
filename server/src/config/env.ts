@@ -35,7 +35,12 @@ const envSchema = z.object({
   EMBEDDING_DIMENSION: z.coerce.number().int().positive(),
 
   QDRANT_URL: z.string().url('QDRANT_URL must be a valid URL'),
-  QDRANT_API_KEY: z.string().min(1).optional(),
+  // Optional: local Qdrant needs no key. An empty env value (QDRANT_API_KEY=)
+  // is treated as absent rather than an invalid empty string.
+  QDRANT_API_KEY: z.preprocess(
+    (v) => (v === '' ? undefined : v),
+    z.string().min(1).optional(),
+  ),
   QDRANT_COLLECTION_NAME: z
     .string()
     .min(1, 'QDRANT_COLLECTION_NAME is required'),
