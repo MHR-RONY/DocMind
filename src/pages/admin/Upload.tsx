@@ -1,62 +1,51 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import {
-  Upload as UploadIcon, FileText, Image, FileSpreadsheet, File, X,
-  CheckCircle2, AlertCircle, Loader2, Clock, HardDrive, Layers, BarChart3
+  Upload as UploadIcon, FileText, File, X,
+  CheckCircle2, AlertCircle, Loader2, Layers, Clock
 } from "lucide-react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { fetchDocuments, uploadDocument } from "@/lib/admin";
+import type { SafeDocument } from "@/lib/types";
+import { ApiRequestError } from "@/lib/api";
 
-interface UploadedFile {
-  id: string;
-  name: string;
-  size: string;
-  sizeBytes: number;
-  type: string;
-  status: "uploading" | "processing" | "indexed" | "error";
-  progress: number;
-  chunks?: number;
-  uploadedAt: string;
-  source: string;
-}
-
-const MOCK_FILES: UploadedFile[] = [
-  { id: "1", name: "product-manual-v3.pdf", size: "4.2 MB", sizeBytes: 4200000, type: "pdf", status: "indexed", progress: 100, chunks: 142, uploadedAt: "2 hours ago", source: "Manual upload" },
-  { id: "2", name: "faq-database.csv", size: "1.8 MB", sizeBytes: 1800000, type: "csv", status: "indexed", progress: 100, chunks: 87, uploadedAt: "5 hours ago", source: "Manual upload" },
-  { id: "3", name: "onboarding-guide.docx", size: "2.1 MB", sizeBytes: 2100000, type: "docx", status: "processing", progress: 67, chunks: 0, uploadedAt: "10 mins ago", source: "Manual upload" },
-  { id: "4", name: "api-reference.md", size: "340 KB", sizeBytes: 340000, type: "md", status: "uploading", progress: 34, chunks: 0, uploadedAt: "Just now", source: "Manual upload" },
-  { id: "5", name: "troubleshooting.pdf", size: "6.7 MB", sizeBytes: 6700000, type: "pdf", status: "error", progress: 100, chunks: 0, uploadedAt: "1 day ago", source: "API upload" },
-  { id: "6", name: "release-notes-q1.html", size: "890 KB", sizeBytes: 890000, type: "html", status: "indexed", progress: 100, chunks: 34, uploadedAt: "3 days ago", source: "Web crawler" },
-];
+const MAX_FILE_BYTES = 10 * 1024 * 1024;
+const ACCEPT = ".pdf,.docx,.txt";
 
 const ACCEPTED = [
   { ext: "PDF", icon: FileText, color: "text-red-500", desc: "Adobe PDF documents" },
   { ext: "DOCX", icon: FileText, color: "text-blue-500", desc: "Microsoft Word" },
-  { ext: "CSV", icon: FileSpreadsheet, color: "text-green-500", desc: "Comma-separated values" },
-  { ext: "MD", icon: FileText, color: "text-muted-foreground", desc: "Markdown files" },
   { ext: "TXT", icon: File, color: "text-muted-foreground", desc: "Plain text files" },
-  { ext: "HTML", icon: FileText, color: "text-orange-500", desc: "Web pages" },
-  { ext: "JSON", icon: File, color: "text-yellow-500", desc: "Structured JSON data" },
-  { ext: "PNG/JPG", icon: Image, color: "text-purple-500", desc: "Images (OCR enabled)" },
 ];
 
-function fileIcon(type: string) {
+function fileIcon(type: SafeDocument["fileType"]) {
   if (type === "pdf") return <FileText className="h-5 w-5 text-red-500" />;
-  if (type === "csv") return <FileSpreadsheet className="h-5 w-5 text-green-500" />;
   if (type === "docx") return <FileText className="h-5 w-5 text-blue-500" />;
-  if (type === "html") return <FileText className="h-5 w-5 text-orange-500" />;
   return <File className="h-5 w-5 text-muted-foreground" />;
 }
 
-function statusBadge(s: UploadedFile["status"]) {
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function formatDate(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "—";
+  return d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+}
+
+function statusBadge(s: SafeDocument["status"]) {
   const map = {
-    uploading: { label: "Uploading", icon: Loader2, cls: "bg-blue-500/10 text-blue-500 border-blue-500/20", spin: true },
-    processing: { label: "Processing", icon: Loader2, cls: "bg-yellow-500/10 text-yellow-500 border-yellow-500/20", spin: true },
-    indexed: { label: "Indexed", icon: CheckCircle2, cls: "bg-emerald-500/10 text-emerald-500 border-emerald-500/20", spin: false },
-    error: { label: "Error", icon: AlertCircle, cls: "bg-destructive/10 text-destructive border-destructive/20", spin: false },
+    processing: { label: "Processing", icon: Loader2, cls: "bg-blue-500/10 text-blue-500 border-blue-500/20", spin: true },
+    ready: { label: "Ready", icon: CheckCircle2, cls: "bg-emerald-500/10 text-emerald-500 border-emerald-500/20", spin: false },
+    failed: { label: "Failed", icon: AlertCircle, cls: "bg-destructive/10 text-destructive border-destructive/20", spin: false },
   };
   const { label, icon: Icon, cls, spin } = map[s];
   return (
@@ -67,24 +56,57 @@ function statusBadge(s: UploadedFile["status"]) {
   );
 }
 
-const STATS = [
-  { label: "Total Files", value: "24", icon: FileText, change: "+3 today" },
-  { label: "Storage Used", value: "156 MB", icon: HardDrive, change: "of 5 GB" },
-  { label: "Total Chunks", value: "1,847", icon: Layers, change: "+263 new" },
-  { label: "Processing Queue", value: "2", icon: Clock, change: "~4 min left" },
-];
-
 export default function UploadPage() {
-  const [files] = useState<UploadedFile[]>(MOCK_FILES);
+  const queryClient = useQueryClient();
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [dragOver, setDragOver] = useState(false);
   const [search, setSearch] = useState("");
   const [tab, setTab] = useState("all");
 
-  const filtered = files.filter((f) => {
-    const matchSearch = f.name.toLowerCase().includes(search.toLowerCase());
+  const { data: documents, isLoading, isError, error } = useQuery({
+    queryKey: ["documents"],
+    queryFn: fetchDocuments,
+  });
+
+  const uploadMutation = useMutation({
+    mutationFn: (file: File) => uploadDocument(file),
+    onSuccess: (doc) => {
+      queryClient.invalidateQueries({ queryKey: ["documents"] });
+      toast.success(`Uploaded ${doc.originalName}`);
+    },
+    onError: (err) => {
+      toast.error(err instanceof ApiRequestError ? err.message : "Upload failed");
+    },
+  });
+
+  function handleFile(file: File | undefined) {
+    if (!file) return;
+    if (file.size > MAX_FILE_BYTES) {
+      toast.error("File exceeds the 10MB limit");
+      return;
+    }
+    uploadMutation.mutate(file);
+  }
+
+  const list: SafeDocument[] = documents ?? [];
+  const filtered = list.filter((f) => {
+    const matchSearch = f.originalName.toLowerCase().includes(search.toLowerCase());
     if (tab === "all") return matchSearch;
     return matchSearch && f.status === tab;
   });
+
+  const totalChunks = list.reduce((a, d) => a + d.chunkCount, 0);
+  const processingCount = list.filter((d) => d.status === "processing").length;
+  const readyCount = list.filter((d) => d.status === "ready").length;
+  const failedCount = list.filter((d) => d.status === "failed").length;
+  const errorMessage =
+    error instanceof ApiRequestError ? error.message : "Failed to load documents";
+
+  const STATS = [
+    { label: "Total Files", value: list.length, icon: FileText, change: `${readyCount} ready` },
+    { label: "Total Chunks", value: totalChunks.toLocaleString(), icon: Layers, change: "Across all docs" },
+    { label: "Processing", value: processingCount, icon: Clock, change: "In queue" },
+  ];
 
   return (
     <div className="space-y-6 max-w-6xl">
@@ -95,8 +117,19 @@ export default function UploadPage() {
         </p>
       </div>
 
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept={ACCEPT}
+        className="hidden"
+        onChange={(e) => {
+          handleFile(e.target.files?.[0]);
+          e.target.value = "";
+        }}
+      />
+
       {/* Stats */}
-      <div className="grid gap-4 md:grid-cols-4">
+      <div className="grid gap-4 md:grid-cols-3">
         {STATS.map((s) => (
           <Card key={s.label}>
             <CardContent className="p-4">
@@ -122,25 +155,41 @@ export default function UploadPage() {
             ? "border-primary bg-primary/5 shadow-lg shadow-primary/10"
             : "border-border hover:border-primary/40 hover:bg-accent/30"
         }`}
+        onClick={() => fileInputRef.current?.click()}
         onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
         onDragLeave={() => setDragOver(false)}
-        onDrop={(e) => { e.preventDefault(); setDragOver(false); }}
+        onDrop={(e) => {
+          e.preventDefault();
+          setDragOver(false);
+          handleFile(e.dataTransfer.files?.[0]);
+        }}
       >
         <CardContent className="flex flex-col items-center justify-center py-14 gap-4">
           <div className={`h-16 w-16 rounded-2xl flex items-center justify-center transition-colors ${
             dragOver ? "bg-primary/20" : "bg-primary/10"
           }`}>
-            <UploadIcon className={`h-8 w-8 text-primary transition-transform ${dragOver ? "scale-110" : ""}`} />
+            {uploadMutation.isPending ? (
+              <Loader2 className="h-8 w-8 text-primary animate-spin" />
+            ) : (
+              <UploadIcon className={`h-8 w-8 text-primary transition-transform ${dragOver ? "scale-110" : ""}`} />
+            )}
           </div>
           <div className="text-center space-y-1">
-            <p className="text-base font-semibold font-sans-body">Drag & drop files here</p>
+            <p className="text-base font-semibold font-sans-body">
+              {uploadMutation.isPending ? "Uploading…" : "Drag & drop a file here"}
+            </p>
             <p className="text-sm text-muted-foreground font-sans-body">or click to browse from your computer</p>
           </div>
-          <Button size="sm" className="gap-2">
+          <Button
+            size="sm"
+            className="gap-2"
+            disabled={uploadMutation.isPending}
+            onClick={(e) => { e.stopPropagation(); fileInputRef.current?.click(); }}
+          >
             <UploadIcon className="h-4 w-4" />
             Browse Files
           </Button>
-          <p className="text-xs text-muted-foreground font-sans-body">Max file size: 50 MB · Batch upload supported</p>
+          <p className="text-xs text-muted-foreground font-sans-body">Max file size: 10 MB · PDF, DOCX, TXT only</p>
         </CardContent>
       </Card>
 
@@ -153,7 +202,7 @@ export default function UploadPage() {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
             {ACCEPTED.map((a) => (
               <div key={a.ext} className="flex items-center gap-3 rounded-lg border bg-card p-3">
                 <a.icon className={`h-5 w-5 shrink-0 ${a.color}`} />
@@ -184,49 +233,44 @@ export default function UploadPage() {
           </div>
           <Tabs value={tab} onValueChange={setTab} className="mt-2">
             <TabsList className="h-8">
-              <TabsTrigger value="all" className="text-xs font-sans-body px-3 h-7">All ({files.length})</TabsTrigger>
-              <TabsTrigger value="indexed" className="text-xs font-sans-body px-3 h-7">Indexed ({files.filter(f => f.status === "indexed").length})</TabsTrigger>
-              <TabsTrigger value="processing" className="text-xs font-sans-body px-3 h-7">Processing ({files.filter(f => f.status === "processing").length})</TabsTrigger>
-              <TabsTrigger value="error" className="text-xs font-sans-body px-3 h-7">Errors ({files.filter(f => f.status === "error").length})</TabsTrigger>
+              <TabsTrigger value="all" className="text-xs font-sans-body px-3 h-7">All ({list.length})</TabsTrigger>
+              <TabsTrigger value="ready" className="text-xs font-sans-body px-3 h-7">Ready ({readyCount})</TabsTrigger>
+              <TabsTrigger value="processing" className="text-xs font-sans-body px-3 h-7">Processing ({processingCount})</TabsTrigger>
+              <TabsTrigger value="failed" className="text-xs font-sans-body px-3 h-7">Failed ({failedCount})</TabsTrigger>
             </TabsList>
           </Tabs>
         </CardHeader>
         <CardContent className="space-y-2">
-          {filtered.length === 0 && (
-            <p className="text-sm text-muted-foreground font-sans-body text-center py-8">No files match your filter.</p>
-          )}
-          {filtered.map((f) => (
-            <div key={f.id} className="flex items-center gap-4 rounded-lg border p-4 hover:bg-accent/30 transition-colors">
-              <div className="h-10 w-10 rounded-lg bg-accent flex items-center justify-center shrink-0">
-                {fileIcon(f.type)}
-              </div>
-              <div className="flex-1 min-w-0 space-y-1.5">
-                <div className="flex items-center gap-2">
-                  <p className="text-sm font-medium font-sans-body truncate">{f.name}</p>
-                  {statusBadge(f.status)}
-                </div>
-                {(f.status === "uploading" || f.status === "processing") && (
-                  <Progress value={f.progress} className="h-1.5" />
-                )}
-                <div className="flex items-center gap-4 text-[11px] text-muted-foreground font-sans-body">
-                  <span>{f.size}</span>
-                  {f.chunks ? <span>{f.chunks} chunks</span> : null}
-                  <span>{f.uploadedAt}</span>
-                  <span className="hidden sm:inline">via {f.source}</span>
-                </div>
-              </div>
-              <div className="flex items-center gap-1">
-                {f.status === "error" && (
-                  <Button variant="ghost" size="sm" className="text-xs font-sans-body gap-1 text-primary">
-                    Retry
-                  </Button>
-                )}
-                <button className="p-1.5 rounded-md hover:bg-accent text-muted-foreground">
-                  <X className="h-4 w-4" />
-                </button>
-              </div>
+          {isLoading ? (
+            <div className="flex items-center justify-center py-8">
+              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
             </div>
-          ))}
+          ) : isError ? (
+            <p className="text-sm text-destructive font-sans-body text-center py-8">{errorMessage}</p>
+          ) : list.length === 0 ? (
+            <p className="text-sm text-muted-foreground font-sans-body text-center py-8">No documents yet</p>
+          ) : filtered.length === 0 ? (
+            <p className="text-sm text-muted-foreground font-sans-body text-center py-8">No files match your filter.</p>
+          ) : (
+            filtered.map((f) => (
+              <div key={f.id} className="flex items-center gap-4 rounded-lg border p-4 hover:bg-accent/30 transition-colors">
+                <div className="h-10 w-10 rounded-lg bg-accent flex items-center justify-center shrink-0">
+                  {fileIcon(f.fileType)}
+                </div>
+                <div className="flex-1 min-w-0 space-y-1.5">
+                  <div className="flex items-center gap-2">
+                    <p className="text-sm font-medium font-sans-body truncate">{f.originalName}</p>
+                    {statusBadge(f.status)}
+                  </div>
+                  <div className="flex items-center gap-4 text-[11px] text-muted-foreground font-sans-body">
+                    <span>{formatBytes(f.fileSize)}</span>
+                    {f.chunkCount ? <span>{f.chunkCount} chunks</span> : null}
+                    <span>{formatDate(f.createdAt)}</span>
+                  </div>
+                </div>
+              </div>
+            ))
+          )}
         </CardContent>
       </Card>
 
@@ -239,8 +283,8 @@ export default function UploadPage() {
         <CardContent>
           <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
             {[
-              { step: "1", title: "Upload", desc: "File validated and stored in secure blob storage" },
-              { step: "2", title: "Parse", desc: "Text extracted using OCR, markdown, or native parsers" },
+              { step: "1", title: "Upload", desc: "File validated and parsed in memory" },
+              { step: "2", title: "Parse", desc: "Text extracted using native parsers" },
               { step: "3", title: "Chunk", desc: "Content split into overlapping semantic chunks" },
               { step: "4", title: "Embed", desc: "Chunks vectorized and indexed for similarity search" },
             ].map((p) => (

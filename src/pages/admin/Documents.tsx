@@ -1,46 +1,74 @@
 import { useState } from "react";
-import { FileText, Upload, Search, Filter, Eye, Trash2, Download, MoreHorizontal, File, FileImage, FileCode, FileSpreadsheet } from "lucide-react";
+import { FileText, Search, Trash2, MoreHorizontal, File, FileCode, Loader2 } from "lucide-react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Progress } from "@/components/ui/progress";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { fetchDocuments, deleteDocument } from "@/lib/admin";
+import type { SafeDocument } from "@/lib/types";
+import { ApiRequestError } from "@/lib/api";
 
-const DOCUMENTS = [
-  { id: 1, name: "Product Documentation v3.2.pdf", type: "PDF", size: "4.2 MB", pages: 128, chunks: 342, status: "indexed", uploadedAt: "2025-04-01", uploadedBy: "Admin" },
-  { id: 2, name: "API Reference Guide.md", type: "MD", size: "890 KB", pages: 45, chunks: 156, status: "indexed", uploadedAt: "2025-03-28", uploadedBy: "Admin" },
-  { id: 3, name: "FAQ Database.csv", type: "CSV", size: "1.1 MB", pages: 1, chunks: 523, status: "processing", uploadedAt: "2025-04-05", uploadedBy: "System" },
-  { id: 4, name: "Training Manual.docx", type: "DOCX", size: "8.7 MB", pages: 234, chunks: 0, status: "queued", uploadedAt: "2025-04-06", uploadedBy: "Admin" },
-  { id: 5, name: "Support Tickets Export.json", type: "JSON", size: "3.4 MB", pages: 1, chunks: 891, status: "indexed", uploadedAt: "2025-03-15", uploadedBy: "System" },
-  { id: 6, name: "Company Policies.pdf", type: "PDF", size: "2.1 MB", pages: 67, chunks: 189, status: "error", uploadedAt: "2025-04-02", uploadedBy: "Admin" },
-  { id: 7, name: "Release Notes 2025.html", type: "HTML", size: "456 KB", pages: 12, chunks: 78, status: "indexed", uploadedAt: "2025-03-20", uploadedBy: "Admin" },
-  { id: 8, name: "Troubleshooting Guide.pdf", type: "PDF", size: "5.6 MB", pages: 89, chunks: 267, status: "indexed", uploadedAt: "2025-03-10", uploadedBy: "System" },
-];
-
-const statusColor: Record<string, string> = {
-  indexed: "bg-emerald-500/10 text-emerald-500 border-emerald-500/20",
+const statusColor: Record<SafeDocument["status"], string> = {
+  ready: "bg-emerald-500/10 text-emerald-500 border-emerald-500/20",
   processing: "bg-blue-500/10 text-blue-500 border-blue-500/20",
-  queued: "bg-amber-500/10 text-amber-500 border-amber-500/20",
-  error: "bg-destructive/10 text-destructive border-destructive/20",
+  failed: "bg-destructive/10 text-destructive border-destructive/20",
 };
 
-const typeIcon: Record<string, React.ReactNode> = {
-  PDF: <FileText className="h-4 w-4 text-red-400" />,
-  MD: <FileCode className="h-4 w-4 text-blue-400" />,
-  CSV: <FileSpreadsheet className="h-4 w-4 text-green-400" />,
-  DOCX: <File className="h-4 w-4 text-blue-500" />,
-  JSON: <FileCode className="h-4 w-4 text-amber-400" />,
-  HTML: <FileCode className="h-4 w-4 text-orange-400" />,
+const typeIcon: Record<SafeDocument["fileType"], React.ReactNode> = {
+  pdf: <FileText className="h-4 w-4 text-red-400" />,
+  docx: <File className="h-4 w-4 text-blue-500" />,
+  txt: <FileCode className="h-4 w-4 text-muted-foreground" />,
 };
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function formatDate(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "—";
+  return d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+}
 
 export default function Documents() {
+  const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
-  const filtered = DOCUMENTS.filter(d => d.name.toLowerCase().includes(search.toLowerCase()));
-  const totalChunks = DOCUMENTS.reduce((a, d) => a + d.chunks, 0);
-  const indexedCount = DOCUMENTS.filter(d => d.status === "indexed").length;
+  const [pendingDelete, setPendingDelete] = useState<SafeDocument | null>(null);
+
+  const { data: documents, isLoading, isError, error } = useQuery({
+    queryKey: ["documents"],
+    queryFn: fetchDocuments,
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: (id: string) => deleteDocument(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["documents"] });
+      toast.success("Document deleted");
+    },
+    onError: (err) => {
+      toast.error(err instanceof ApiRequestError ? err.message : "Delete failed");
+    },
+    onSettled: () => setPendingDelete(null),
+  });
+
+  const list: SafeDocument[] = documents ?? [];
+  const filtered = list.filter((d) => d.originalName.toLowerCase().includes(search.toLowerCase()));
+  const totalChunks = list.reduce((a, d) => a + d.chunkCount, 0);
+  const readyCount = list.filter((d) => d.status === "ready").length;
+  const processingCount = list.filter((d) => d.status === "processing").length;
+  const errorMessage =
+    error instanceof ApiRequestError ? error.message : "Failed to load documents";
 
   return (
     <div className="p-6 space-y-6">
@@ -49,17 +77,14 @@ export default function Documents() {
           <h1 className="text-2xl font-bold font-sans-body text-foreground">Documents</h1>
           <p className="text-sm text-muted-foreground font-sans-body mt-1">Manage uploaded documents for the RAG pipeline</p>
         </div>
-        <Button className="gap-2">
-          <Upload className="h-4 w-4" /> Upload Document
-        </Button>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         {[
-          { label: "Total Documents", value: DOCUMENTS.length, sub: `${indexedCount} indexed` },
+          { label: "Total Documents", value: list.length, sub: `${readyCount} ready` },
           { label: "Total Chunks", value: totalChunks.toLocaleString(), sub: "Across all docs" },
-          { label: "Storage Used", value: "26.4 MB", sub: "of 1 GB" },
-          { label: "Processing", value: DOCUMENTS.filter(d => d.status === "processing" || d.status === "queued").length, sub: "In queue" },
+          { label: "Ready", value: readyCount, sub: "Indexed" },
+          { label: "Processing", value: processingCount, sub: "In queue" },
         ].map((stat) => (
           <Card key={stat.label}>
             <CardContent className="p-4">
@@ -80,53 +105,87 @@ export default function Documents() {
                 <Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-muted-foreground" />
                 <Input placeholder="Search documents..." className="pl-8 h-9 w-64 text-sm" value={search} onChange={e => setSearch(e.target.value)} />
               </div>
-              <Button variant="outline" size="sm" className="gap-1.5"><Filter className="h-3.5 w-3.5" /> Filter</Button>
             </div>
           </div>
         </CardHeader>
         <CardContent className="p-0">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Document</TableHead>
-                <TableHead>Type</TableHead>
-                <TableHead>Size</TableHead>
-                <TableHead>Pages</TableHead>
-                <TableHead>Chunks</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Uploaded</TableHead>
-                <TableHead className="w-10"></TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {filtered.map((doc) => (
-                <TableRow key={doc.id}>
-                  <TableCell className="font-medium text-sm flex items-center gap-2">
-                    {typeIcon[doc.type] || <File className="h-4 w-4" />}
-                    {doc.name}
-                  </TableCell>
-                  <TableCell><Badge variant="outline" className="text-[11px]">{doc.type}</Badge></TableCell>
-                  <TableCell className="text-sm text-muted-foreground">{doc.size}</TableCell>
-                  <TableCell className="text-sm text-muted-foreground">{doc.pages}</TableCell>
-                  <TableCell className="text-sm text-muted-foreground">{doc.chunks || "—"}</TableCell>
-                  <TableCell><Badge variant="outline" className={statusColor[doc.status]}>{doc.status}</Badge></TableCell>
-                  <TableCell className="text-sm text-muted-foreground">{doc.uploadedAt}</TableCell>
-                  <TableCell>
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild><Button variant="ghost" size="icon" className="h-7 w-7"><MoreHorizontal className="h-3.5 w-3.5" /></Button></DropdownMenuTrigger>
-                      <DropdownMenuContent align="end">
-                        <DropdownMenuItem className="gap-2 text-sm"><Eye className="h-3.5 w-3.5" /> Preview</DropdownMenuItem>
-                        <DropdownMenuItem className="gap-2 text-sm"><Download className="h-3.5 w-3.5" /> Download</DropdownMenuItem>
-                        <DropdownMenuItem className="gap-2 text-sm text-destructive"><Trash2 className="h-3.5 w-3.5" /> Delete</DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  </TableCell>
+          {isLoading ? (
+            <div className="flex items-center justify-center py-16">
+              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+            </div>
+          ) : isError ? (
+            <p className="text-sm text-destructive font-sans-body text-center py-16">{errorMessage}</p>
+          ) : filtered.length === 0 ? (
+            <p className="text-sm text-muted-foreground font-sans-body text-center py-16">No documents yet</p>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Document</TableHead>
+                  <TableHead>Type</TableHead>
+                  <TableHead>Size</TableHead>
+                  <TableHead>Chunks</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Uploaded</TableHead>
+                  <TableHead className="w-10"></TableHead>
                 </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+              </TableHeader>
+              <TableBody>
+                {filtered.map((doc) => (
+                  <TableRow key={doc.id}>
+                    <TableCell className="font-medium text-sm flex items-center gap-2">
+                      {typeIcon[doc.fileType] || <File className="h-4 w-4" />}
+                      {doc.originalName}
+                    </TableCell>
+                    <TableCell><Badge variant="outline" className="text-[11px] uppercase">{doc.fileType}</Badge></TableCell>
+                    <TableCell className="text-sm text-muted-foreground">{formatBytes(doc.fileSize)}</TableCell>
+                    <TableCell className="text-sm text-muted-foreground">{doc.chunkCount || "—"}</TableCell>
+                    <TableCell><Badge variant="outline" className={`capitalize ${statusColor[doc.status]}`}>{doc.status}</Badge></TableCell>
+                    <TableCell className="text-sm text-muted-foreground">{formatDate(doc.createdAt)}</TableCell>
+                    <TableCell>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild><Button variant="ghost" size="icon" className="h-7 w-7"><MoreHorizontal className="h-3.5 w-3.5" /></Button></DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuItem
+                            className="gap-2 text-sm text-destructive"
+                            onClick={() => setPendingDelete(doc)}
+                          >
+                            <Trash2 className="h-3.5 w-3.5" /> Delete
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
         </CardContent>
       </Card>
+
+      <AlertDialog open={pendingDelete !== null} onOpenChange={(open) => { if (!open) setPendingDelete(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete document?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This permanently removes "{pendingDelete?.originalName}" and its indexed chunks. This cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleteMutation.isPending}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              disabled={deleteMutation.isPending}
+              onClick={(e) => {
+                e.preventDefault();
+                if (pendingDelete) deleteMutation.mutate(pendingDelete.id);
+              }}
+            >
+              {deleteMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : "Delete"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
