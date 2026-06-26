@@ -1,33 +1,73 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Search, Plus } from "lucide-react";
+import { Search, Plus, Loader2 } from "lucide-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
 import { AppSidebar } from "@/components/AppSidebar";
 import { SidebarProvider } from "@/components/ui/sidebar";
+import { fetchSessions, createSession, type ChatSession } from "@/lib/chat";
+import { ApiRequestError } from "@/lib/api";
 
-const CHATS = [
-  { title: "AIOS new version security breach", time: "Last message 11 minutes ago" },
-  { title: "Using Claude code with Ollama local models", time: "Last message 19 minutes ago" },
-  { title: "Comparing Qwen3-Coder-Next vs Qwen 3.5", time: "Last message 15 hours ago" },
-  { title: "RAG chatbot stack recommendation with Claude", time: "Last message 1 day ago" },
-  { title: "Expert opinion request on Shop No data breach", time: "Last message 2 days ago" },
-  { title: "Complete e-commerce dashboard with inventory and payment integration", time: "Last message 2 days ago" },
-  { title: "Monster website package services overview", time: "Last message 2 days ago" },
-  { title: "Claude API pricing for RAG chatbot", time: "Last message 3 days ago" },
-  { title: "Multi-vendor ecommerce and transport management platform", time: "Last message 3 days ago" },
-  { title: "Managing student attendance on university closure days", time: "Last message 4 days ago" },
-  { title: "E-commerce website development package 50k", time: "Last message 4 days ago" },
-  { title: "Cookie parser in MERN server setup", time: "Last message 5 days ago" },
-  { title: "How compound interest works", time: "Last message 5 days ago" },
-  { title: "Running multiple Facebook clone instances", time: "Last message 6 days ago" },
-  { title: "Game and skin pricing clarification", time: "Last message 1 week ago" },
-];
+const SESSIONS_QUERY_KEY = ["chat", "sessions"] as const;
+
+/** Turns an ISO timestamp into a short relative label like "3 hours ago". */
+function relativeTime(iso: string): string {
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return "";
+
+  const seconds = Math.floor((Date.now() - then) / 1000);
+  if (seconds < 60) return "just now";
+
+  const units: [limit: number, secs: number, label: string][] = [
+    [60, 60, "minute"],
+    [24, 3600, "hour"],
+    [7, 86400, "day"],
+    [4.345, 604800, "week"],
+    [12, 2629800, "month"],
+    [Number.POSITIVE_INFINITY, 31557600, "year"],
+  ];
+
+  for (const [limit, secs, label] of units) {
+    const value = Math.floor(seconds / secs);
+    if (seconds < limit * secs) {
+      return `${value} ${label}${value === 1 ? "" : "s"} ago`;
+    }
+  }
+  return "";
+}
 
 const Chats = () => {
   const [searchQuery, setSearchQuery] = useState("");
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
 
-  const filtered = CHATS.filter((c) =>
-    c.title.toLowerCase().includes(searchQuery.toLowerCase())
+  const {
+    data: sessions,
+    isLoading,
+    isError,
+    error,
+  } = useQuery<ChatSession[]>({
+    queryKey: SESSIONS_QUERY_KEY,
+    queryFn: fetchSessions,
+  });
+
+  const { mutate: startNewChat, isPending: isCreating } = useMutation({
+    mutationFn: () => createSession(),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: SESSIONS_QUERY_KEY });
+      navigate("/");
+    },
+    onError: (err) => {
+      const message =
+        err instanceof ApiRequestError
+          ? err.message
+          : "Could not start a new chat. Please try again.";
+      toast.error(message);
+    },
+  });
+
+  const filtered = (sessions ?? []).filter((c) =>
+    c.title.toLowerCase().includes(searchQuery.toLowerCase()),
   );
 
   return (
@@ -40,10 +80,15 @@ const Chats = () => {
             <div className="flex items-center justify-between mb-6">
               <h1 className="text-2xl font-semibold text-foreground font-sans">Chats</h1>
               <button
-                onClick={() => navigate("/")}
-                className="flex items-center gap-2 px-4 py-2 rounded-lg border border-border bg-card hover:bg-secondary text-sm text-foreground font-sans-body transition-colors"
+                onClick={() => startNewChat()}
+                disabled={isCreating}
+                className="flex items-center gap-2 px-4 py-2 rounded-lg border border-border bg-card hover:bg-secondary text-sm text-foreground font-sans-body transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
               >
-                <Plus className="h-4 w-4" />
+                {isCreating ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Plus className="h-4 w-4" />
+                )}
                 New chat
               </button>
             </div>
@@ -67,24 +112,37 @@ const Chats = () => {
 
             {/* Chat list */}
             <div className="divide-y divide-border">
-              {filtered.map((chat) => (
-                <button
-                  key={chat.title}
-                  onClick={() => navigate("/")}
-                  className="w-full text-left px-4 py-4 hover:bg-secondary/50 transition-colors flex flex-col gap-1"
-                >
-                  <span className="text-sm font-medium text-foreground font-sans-body">
-                    {chat.title}
-                  </span>
-                  <span className="text-xs text-muted-foreground font-sans-body">
-                    {chat.time}
-                  </span>
-                </button>
-              ))}
-              {filtered.length === 0 && (
-                <div className="py-12 text-center text-sm text-muted-foreground font-sans-body">
-                  No chats found
+              {isLoading ? (
+                <div className="flex items-center justify-center py-12">
+                  <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
                 </div>
+              ) : isError ? (
+                <div className="py-12 text-center text-sm text-muted-foreground font-sans-body">
+                  {error instanceof ApiRequestError
+                    ? error.message
+                    : "Couldn't load your chats. Please try again."}
+                </div>
+              ) : filtered.length === 0 ? (
+                <div className="py-12 text-center text-sm text-muted-foreground font-sans-body">
+                  {searchQuery
+                    ? "No chats found"
+                    : "No chats yet. Start a new one."}
+                </div>
+              ) : (
+                filtered.map((chat) => (
+                  <button
+                    key={chat._id}
+                    onClick={() => navigate("/")}
+                    className="w-full text-left px-4 py-4 hover:bg-secondary/50 transition-colors flex flex-col gap-1"
+                  >
+                    <span className="text-sm font-medium text-foreground font-sans-body">
+                      {chat.title}
+                    </span>
+                    <span className="text-xs text-muted-foreground font-sans-body">
+                      Last updated {relativeTime(chat.updatedAt)}
+                    </span>
+                  </button>
+                ))
               )}
             </div>
           </div>
