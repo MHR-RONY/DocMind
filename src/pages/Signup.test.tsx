@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
-import Login from "./Login";
+import Signup from "./Signup";
 import { useAuth } from "@/context/AuthContext";
 import { ApiRequestError } from "@/lib/api";
 import {
@@ -21,7 +21,7 @@ vi.mock("react-router-dom", async () => {
   return { ...actual, useNavigate: () => mockNavigate };
 });
 
-const signIn = vi.fn();
+const signUp = vi.fn();
 const signInWithOAuth = vi.fn();
 
 vi.mock("@/context/AuthContext", () => ({ useAuth: vi.fn() }));
@@ -41,18 +41,21 @@ vi.mock("sonner", () => ({
   toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() },
 }));
 
-const renderLogin = () =>
+const renderSignup = () =>
   render(
     <MemoryRouter>
-      <Login />
+      <Signup />
     </MemoryRouter>,
   );
 
-const fillForm = (email: string, password: string) => {
+const fillForm = (name: string, email: string, password: string) => {
+  fireEvent.change(screen.getByPlaceholderText("Full name"), {
+    target: { value: name },
+  });
   fireEvent.change(screen.getByPlaceholderText("Email address"), {
     target: { value: email },
   });
-  fireEvent.change(screen.getByPlaceholderText("Password"), {
+  fireEvent.change(screen.getByPlaceholderText("Password (min. 8 characters)"), {
     target: { value: password },
   });
 };
@@ -67,70 +70,99 @@ const makeUser = (role: AuthUser["role"]): AuthUser => ({
   updatedAt: "2026-01-01T00:00:00.000Z",
 });
 
-describe("Login", () => {
+describe("Signup", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(useAuth).mockReturnValue({
       user: null,
       isLoading: false,
-      signIn,
-      signUp: vi.fn(),
+      signIn: vi.fn(),
+      signUp,
       signInWithOAuth,
       signOut: vi.fn(),
     });
   });
 
   it("blocks submission and shows an error when fields are empty", () => {
-    renderLogin();
-    fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+    renderSignup();
+    fireEvent.click(screen.getByRole("button", { name: "Create account" }));
 
     expect(toast.error).toHaveBeenCalledWith("Please fill in all fields");
-    expect(signIn).not.toHaveBeenCalled();
+    expect(signUp).not.toHaveBeenCalled();
   });
 
-  it("logs in a regular user and navigates home", async () => {
-    signIn.mockResolvedValue(makeUser("user"));
-    renderLogin();
-    fillForm("test@example.com", "secret123");
-    fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+  it("blocks submission when the password is shorter than 8 characters", () => {
+    renderSignup();
+    fillForm("Test User", "test@example.com", "short");
+    fireEvent.click(screen.getByRole("button", { name: "Create account" }));
+
+    expect(toast.error).toHaveBeenCalledWith(
+      "Password must be at least 8 characters",
+    );
+    expect(signUp).not.toHaveBeenCalled();
+  });
+
+  it("registers a regular user and navigates home", async () => {
+    signUp.mockResolvedValue(makeUser("user"));
+    renderSignup();
+    fillForm("Test User", "test@example.com", "secret123");
+    fireEvent.click(screen.getByRole("button", { name: "Create account" }));
 
     await waitFor(() => {
-      expect(signIn).toHaveBeenCalledWith("test@example.com", "secret123");
+      expect(signUp).toHaveBeenCalledWith(
+        "Test User",
+        "test@example.com",
+        "secret123",
+      );
     });
-    expect(toast.success).toHaveBeenCalledWith("Logged in successfully!");
+    expect(toast.success).toHaveBeenCalledWith("Account created successfully!");
     expect(mockNavigate).toHaveBeenCalledWith("/");
   });
 
   it("navigates admins to the admin area", async () => {
-    signIn.mockResolvedValue(makeUser("admin"));
-    renderLogin();
-    fillForm("admin@example.com", "secret123");
-    fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+    signUp.mockResolvedValue(makeUser("admin"));
+    renderSignup();
+    fillForm("Admin User", "admin@example.com", "secret123");
+    fireEvent.click(screen.getByRole("button", { name: "Create account" }));
 
     await waitFor(() => {
       expect(mockNavigate).toHaveBeenCalledWith("/admin");
     });
   });
 
-  it("surfaces the API error message on failed login", async () => {
-    signIn.mockRejectedValue(
-      new ApiRequestError(401, "Invalid credentials"),
+  it("surfaces the API error message when the email is already registered", async () => {
+    signUp.mockRejectedValue(
+      new ApiRequestError(409, "Email is already registered"),
     );
-    renderLogin();
-    fillForm("test@example.com", "wrongpass");
-    fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+    renderSignup();
+    fillForm("Test User", "taken@example.com", "secret123");
+    fireEvent.click(screen.getByRole("button", { name: "Create account" }));
 
     await waitFor(() => {
-      expect(toast.error).toHaveBeenCalledWith("Invalid credentials");
+      expect(toast.error).toHaveBeenCalledWith("Email is already registered");
+    });
+    expect(mockNavigate).not.toHaveBeenCalled();
+  });
+
+  it("surfaces a validation error from the backend", async () => {
+    signUp.mockRejectedValue(
+      new ApiRequestError(400, "Password is too weak"),
+    );
+    renderSignup();
+    fillForm("Test User", "test@example.com", "secret123");
+    fireEvent.click(screen.getByRole("button", { name: "Create account" }));
+
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith("Password is too weak");
     });
     expect(mockNavigate).not.toHaveBeenCalled();
   });
 
   it("shows a generic message for non-API errors", async () => {
-    signIn.mockRejectedValue(new Error("boom"));
-    renderLogin();
-    fillForm("test@example.com", "secret123");
-    fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+    signUp.mockRejectedValue(new Error("boom"));
+    renderSignup();
+    fillForm("Test User", "test@example.com", "secret123");
+    fireEvent.click(screen.getByRole("button", { name: "Create account" }));
 
     await waitFor(() => {
       expect(toast.error).toHaveBeenCalledWith(
@@ -139,10 +171,10 @@ describe("Login", () => {
     });
   });
 
-  it("completes Google sign-in: token -> oauthLogin -> navigate", async () => {
+  it("completes Google sign-up: token -> oauthLogin -> navigate", async () => {
     vi.mocked(getGoogleIdToken).mockResolvedValue("google-id-token");
     signInWithOAuth.mockResolvedValue(makeUser("user"));
-    renderLogin();
+    renderSignup();
     fireEvent.click(
       screen.getByRole("button", { name: /Continue with Google/i }),
     );
@@ -150,14 +182,14 @@ describe("Login", () => {
     await waitFor(() => {
       expect(signInWithOAuth).toHaveBeenCalledWith("google", "google-id-token");
     });
-    expect(toast.success).toHaveBeenCalledWith("Logged in successfully!");
+    expect(toast.success).toHaveBeenCalledWith("Account created successfully!");
     expect(mockNavigate).toHaveBeenCalledWith("/");
   });
 
-  it("completes Apple sign-in: token -> oauthLogin -> navigate", async () => {
+  it("completes Apple sign-up: token -> oauthLogin -> navigate", async () => {
     vi.mocked(getAppleIdToken).mockResolvedValue("apple-id-token");
     signInWithOAuth.mockResolvedValue(makeUser("admin"));
-    renderLogin();
+    renderSignup();
     fireEvent.click(
       screen.getByRole("button", { name: /Continue with Apple/i }),
     );
@@ -172,7 +204,7 @@ describe("Login", () => {
     vi.mocked(getGoogleIdToken).mockRejectedValue(
       new OAuthUnavailableError("Google sign-in is not configured for this app"),
     );
-    renderLogin();
+    renderSignup();
     fireEvent.click(
       screen.getByRole("button", { name: /Continue with Google/i }),
     );
@@ -183,22 +215,6 @@ describe("Login", () => {
       );
     });
     expect(signInWithOAuth).not.toHaveBeenCalled();
-    expect(mockNavigate).not.toHaveBeenCalled();
-  });
-
-  it("surfaces a backend rejection of the provider token", async () => {
-    vi.mocked(getGoogleIdToken).mockResolvedValue("google-id-token");
-    signInWithOAuth.mockRejectedValue(
-      new ApiRequestError(401, "Invalid Google credential"),
-    );
-    renderLogin();
-    fireEvent.click(
-      screen.getByRole("button", { name: /Continue with Google/i }),
-    );
-
-    await waitFor(() => {
-      expect(toast.error).toHaveBeenCalledWith("Invalid Google credential");
-    });
     expect(mockNavigate).not.toHaveBeenCalled();
   });
 });

@@ -1,16 +1,11 @@
 import {
-  MessageSquare, Users, Database, Brain, TrendingUp, TrendingDown,
-  ArrowUpRight, Clock, CheckCircle2, AlertTriangle, FileText, Activity
+  MessageSquare, Users, FileText, Activity, Brain, Loader2
 } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, PieChart, Pie, Cell } from "recharts";
-
-const STATS = [
-  { label: "Total Conversations", value: "12,847", change: "+14.2%", up: true, icon: MessageSquare, color: "text-blue-500" },
-  { label: "Active Users", value: "3,241", change: "+8.1%", up: true, icon: Users, color: "text-green-500" },
-  { label: "Documents Indexed", value: "1,892", change: "+23", up: true, icon: FileText, color: "text-primary" },
-  { label: "Avg Response Time", value: "1.2s", change: "-0.3s", up: true, icon: Clock, color: "text-purple-500" },
-];
+import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from "recharts";
+import { fetchAdminStats } from "@/lib/admin";
+import { ApiRequestError } from "@/lib/api";
 
 const CONVERSATION_DATA = [
   { date: "Mon", conversations: 420, resolved: 380 },
@@ -60,6 +55,21 @@ const statusColor: Record<string, string> = {
 };
 
 export default function Dashboard() {
+  const { data: stats, isLoading, isError, error } = useQuery({
+    queryKey: ["admin", "stats"],
+    queryFn: fetchAdminStats,
+  });
+
+  const statCards = [
+    { label: "Total Users", value: stats?.totalUsers ?? 0, icon: Users, color: "text-green-500" },
+    { label: "Documents Indexed", value: stats?.totalDocuments ?? 0, icon: FileText, color: "text-primary" },
+    { label: "Total Messages", value: stats?.totalMessages ?? 0, icon: MessageSquare, color: "text-blue-500" },
+    { label: "Tokens Used", value: (stats?.totalTokensUsed ?? 0).toLocaleString(), icon: Brain, color: "text-purple-500" },
+  ];
+
+  const statsErrorMessage =
+    error instanceof ApiRequestError ? error.message : "Failed to load stats";
+
   return (
     <div className="p-6 space-y-6 max-w-[1400px] mx-auto">
       {/* Header */}
@@ -71,25 +81,33 @@ export default function Dashboard() {
       </div>
 
       {/* Stats Grid */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        {STATS.map((stat) => (
-          <Card key={stat.label} className="relative overflow-hidden">
-            <CardContent className="p-5">
-              <div className="flex items-center justify-between mb-3">
-                <div className={`p-2 rounded-lg bg-secondary ${stat.color}`}>
-                  <stat.icon className="h-4 w-4" />
+      {isError ? (
+        <Card>
+          <CardContent className="p-5">
+            <p className="text-sm text-destructive font-sans-body">{statsErrorMessage}</p>
+          </CardContent>
+        </Card>
+      ) : (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          {statCards.map((stat) => (
+            <Card key={stat.label} className="relative overflow-hidden">
+              <CardContent className="p-5">
+                <div className="flex items-center justify-between mb-3">
+                  <div className={`p-2 rounded-lg bg-secondary ${stat.color}`}>
+                    <stat.icon className="h-4 w-4" />
+                  </div>
                 </div>
-                <span className={`text-xs font-sans-body flex items-center gap-0.5 ${stat.up ? "text-green-500" : "text-red-500"}`}>
-                  {stat.up ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />}
-                  {stat.change}
-                </span>
-              </div>
-              <p className="text-2xl font-semibold font-sans-body text-foreground">{stat.value}</p>
-              <p className="text-xs text-muted-foreground font-sans-body mt-1">{stat.label}</p>
-            </CardContent>
-          </Card>
-        ))}
-      </div>
+                {isLoading ? (
+                  <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                ) : (
+                  <p className="text-2xl font-semibold font-sans-body text-foreground">{stat.value}</p>
+                )}
+                <p className="text-xs text-muted-foreground font-sans-body mt-1">{stat.label}</p>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      )}
 
       {/* Charts Row */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">

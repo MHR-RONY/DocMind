@@ -4,7 +4,7 @@ import { Mail, Lock, Eye, EyeOff } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
-import { login, oauthLogin } from "@/lib/auth";
+import { useAuth } from "@/context/AuthContext";
 import { ApiRequestError } from "@/lib/api";
 import {
   getGoogleIdToken,
@@ -21,6 +21,7 @@ const Login = () => {
     null,
   );
   const navigate = useNavigate();
+  const { signIn, signInWithOAuth } = useAuth();
 
   const redirectFor = (role: string) =>
     navigate(role === "admin" ? "/admin" : "/");
@@ -34,7 +35,7 @@ const Login = () => {
 
     setIsSubmitting(true);
     try {
-      const user = await login(email, password);
+      const user = await signIn(email, password);
       toast.success("Logged in successfully!");
       redirectFor(user.role);
     } catch (error) {
@@ -55,7 +56,7 @@ const Login = () => {
         provider === "google"
           ? await getGoogleIdToken()
           : await getAppleIdToken();
-      const user = await oauthLogin(provider, idToken);
+      const user = await signInWithOAuth(provider, idToken);
       toast.success("Logged in successfully!");
       redirectFor(user.role);
     } catch (error) {
