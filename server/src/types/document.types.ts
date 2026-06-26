@@ -22,6 +22,25 @@ export interface IDocument {
 }
 
 /**
+ * API-safe representation of a Document returned to clients.
+ *
+ * Deliberately OMITS `filename` (internal UUID), `qdrantPointIds` (Qdrant
+ * vector ids — forbidden in responses per CLAUDE.md), and all mongoose
+ * internals (`__v`). `_id` is normalized to a string `id`.
+ */
+export interface SafeDocument {
+  id: string;
+  originalName: string;
+  fileType: DocumentFileType;
+  fileSize: number;
+  uploadedBy: string;
+  chunkCount: number;
+  status: DocumentStatus;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+/**
  * A retrieved source chunk reference returned alongside chat answers
  * so the client can attribute responses to their source documents.
  */

@@ -7,6 +7,7 @@ import { splitTextIntoChunks } from '../utils/chunker';
 import { validateMagicBytes, detectFileType } from '../utils/magicBytes';
 import { validateObjectId } from '../utils/sanitize';
 import { DocumentStatus } from '../types/enums';
+import { SafeDocument } from '../types/document.types';
 import { PaginationMeta } from '../types/api.types';
 import * as voyageService from './voyage.service';
 import * as qdrantService from './qdrant.service';
@@ -110,6 +111,25 @@ export const processDocumentAsync = async (
 };
 
 /**
+ * Maps a raw Mongoose Document record to its API-safe representation.
+ *
+ * Strips `qdrantPointIds`, the internal `filename` UUID, and mongoose
+ * internals (`__v`) per CLAUDE.md — these must never reach the client.
+ * Normalizes `_id` → `id` and `uploadedBy` → string.
+ */
+export const toSafeDocument = (doc: IDocumentDocument): SafeDocument => ({
+  id: doc.id,
+  originalName: doc.originalName,
+  fileType: doc.fileType,
+  fileSize: doc.fileSize,
+  uploadedBy: doc.uploadedBy.toString(),
+  chunkCount: doc.chunkCount,
+  status: doc.status,
+  createdAt: doc.createdAt,
+  updatedAt: doc.updatedAt,
+});
+
+/**
  * Validates and persists a document's metadata, then kicks off asynchronous
  * processing (parse → embed → upsert) without blocking. Returns the freshly
  * created record in PROCESSING state so the controller can respond 202.
@@ -119,7 +139,7 @@ export const processDocumentAsync = async (
 export const ingestDocument = async (
   file: Express.Multer.File,
   uploadedBy: string,
-): Promise<IDocumentDocument> => {
+): Promise<SafeDocument> => {
   if (!validateMagicBytes(file.buffer, file.mimetype)) {
     throw ApiError.badRequest('File content does not match its type');
   }
@@ -154,7 +174,7 @@ export const ingestDocument = async (
     );
   });
 
-  return document;
+  return toSafeDocument(document);
 };
 
 /**
@@ -163,7 +183,7 @@ export const ingestDocument = async (
 export const listDocuments = async (
   page: number,
   pageSize: number,
-): Promise<{ documents: IDocumentDocument[]; pagination: PaginationMeta }> => {
+): Promise<{ documents: SafeDocument[]; pagination: PaginationMeta }> => {
   const safePage = page > 0 ? page : 1;
   const safePageSize = pageSize > 0 ? pageSize : 10;
   const skip = (safePage - 1) * safePageSize;
@@ -184,7 +204,7 @@ export const listDocuments = async (
     totalPages: Math.ceil(total / safePageSize),
   };
 
-  return { documents, pagination };
+  return { documents: documents.map(toSafeDocument), pagination };
 };
 
 /**
