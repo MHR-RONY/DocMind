@@ -8,6 +8,11 @@ import {
 } from '../utils/tokenUtils';
 import { ApiError } from '../utils/ApiError';
 import { SafeUser } from '../types/user.types';
+import {
+  verifyGoogleIdToken,
+  verifyAppleIdToken,
+  OAuthIdentity,
+} from '../utils/oauthVerify';
 
 /**
  * Authentication service.
@@ -111,6 +116,69 @@ export const login = async (
 
   return { user: toSafeUser(user), ...tokens };
 };
+
+type OAuthProvider = 'google' | 'apple';
+
+const VERIFIERS: Record<
+  OAuthProvider,
+  (idToken: string) => Promise<OAuthIdentity>
+> = {
+  google: verifyGoogleIdToken,
+  apple: verifyAppleIdToken,
+};
+
+/**
+ * Authenticates via a third-party OAuth provider (Google/Apple).
+ *
+ * Verifies the provider ID token, then resolves the local account by, in
+ * order: existing provider id → existing email (links the provider to that
+ * account) → newly created account. OAuth accounts have no local password.
+ * The refresh token is rotated on every login, exactly like password login.
+ *
+ * @throws ApiError.notImplemented if the provider is not configured.
+ * @throws ApiError.unauthorized on an invalid provider token.
+ * @throws ApiError.forbidden if the account is blocked.
+ */
+export const oauthLogin = async (
+  provider: OAuthProvider,
+  idToken: string,
+): Promise<AuthResult> => {
+  const identity = await VERIFIERS[provider](idToken);
+  const providerField = provider === 'google' ? 'googleId' : 'appleId';
+
+  let user = await User.findOne({ [providerField]: identity.providerId })
+    .select('+googleId +appleId +refreshToken')
+    .exec();
+
+  if (user === null) {
+    // No account for this provider id yet — link by email if one exists,
+    // otherwise provision a fresh OAuth-only account.
+    user = await User.findOne({ email: identity.email })
+      .select('+googleId +appleId +refreshToken')
+      .exec();
+
+    if (user === null) {
+      user = await User.create({
+        name: identity.name,
+        email: identity.email,
+        [providerField]: identity.providerId,
+      });
+    } else {
+      user.set(providerField, identity.providerId);
+    }
+  }
+
+  if (user.isBlocked) {
+    throw ApiError.forbidden('Account is blocked');
+  }
+
+  const tokens = issueTokens(user);
+  user.refreshToken = tokens.refreshToken;
+  await user.save();
+
+  return { user: toSafeUser(user), ...tokens };
+};
+
 
 /**
  * Validates a refresh token and rotates it. Detects token reuse: if the

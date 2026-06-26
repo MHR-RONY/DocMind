@@ -22,6 +22,17 @@ export const loginSchema = z
   .strict();
 
 /**
+ * Body schema for OAuth login (POST /api/auth/google, /api/auth/apple).
+ * The client posts the provider-issued ID token (JWT) for server-side
+ * verification — never raw profile data, which cannot be trusted.
+ */
+export const oauthLoginSchema = z
+  .object({
+    idToken: z.string().min(1),
+  })
+  .strict();
+
+/**
  * Body schema for a forgot-password request.
  */
 export const forgotPasswordSchema = z
@@ -42,5 +53,6 @@ export const resetPasswordSchema = z
 
 export type RegisterInput = z.infer<typeof registerSchema>;
 export type LoginInput = z.infer<typeof loginSchema>;
+export type OAuthLoginInput = z.infer<typeof oauthLoginSchema>;
 export type ForgotPasswordInput = z.infer<typeof forgotPasswordSchema>;
 export type ResetPasswordInput = z.infer<typeof resetPasswordSchema>;

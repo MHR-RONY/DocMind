@@ -55,4 +55,8 @@ export class ApiError extends Error {
     // Internal errors are non-operational by default.
     return new ApiError(500, message, errors, false);
   }
+
+  static notImplemented(message = 'Not implemented', errors?: ApiFieldError[]): ApiError {
+    return new ApiError(503, message, errors);
+  }
 }

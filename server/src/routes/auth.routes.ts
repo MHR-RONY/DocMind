@@ -5,6 +5,7 @@ import { validateBody } from '../middleware/validate';
 import {
   registerSchema,
   loginSchema,
+  oauthLoginSchema,
   forgotPasswordSchema,
   resetPasswordSchema,
 } from '../validators/auth.validators';
@@ -14,6 +15,8 @@ const router = Router();
 
 router.post('/register', authLimiter, validateBody(registerSchema), authController.register);
 router.post('/login', authLimiter, validateBody(loginSchema), authController.login);
+router.post('/google', authLimiter, validateBody(oauthLoginSchema), authController.googleLogin);
+router.post('/apple', authLimiter, validateBody(oauthLoginSchema), authController.appleLogin);
 router.post('/refresh', authController.refresh);
 router.post('/logout', authenticate, authController.logout);
 router.get('/me', authenticate, authController.me);

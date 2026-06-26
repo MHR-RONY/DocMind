@@ -58,6 +58,26 @@ export const login = catchAsync(async (req, res) => {
   ApiResponse.success(res, 200, 'Logged in', { user, accessToken });
 });
 
+export const googleLogin = catchAsync(async (req, res) => {
+  const { idToken } = req.body;
+  const { user, accessToken, refreshToken } = await authService.oauthLogin(
+    'google',
+    idToken,
+  );
+  setRefreshCookie(res, refreshToken);
+  ApiResponse.success(res, 200, 'Logged in', { user, accessToken });
+});
+
+export const appleLogin = catchAsync(async (req, res) => {
+  const { idToken } = req.body;
+  const { user, accessToken, refreshToken } = await authService.oauthLogin(
+    'apple',
+    idToken,
+  );
+  setRefreshCookie(res, refreshToken);
+  ApiResponse.success(res, 200, 'Logged in', { user, accessToken });
+});
+
 export const refresh = catchAsync(async (req, res) => {
   const token: unknown = req.cookies?.[REFRESH_COOKIE_NAME];
   if (typeof token !== 'string' || token.length === 0) {
