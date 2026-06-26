@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import Login from "./Login";
-import { login, oauthLogin } from "@/lib/auth";
+import { useAuth } from "@/context/AuthContext";
 import { ApiRequestError } from "@/lib/api";
 import {
   getGoogleIdToken,
@@ -21,7 +21,10 @@ vi.mock("react-router-dom", async () => {
   return { ...actual, useNavigate: () => mockNavigate };
 });
 
-vi.mock("@/lib/auth", () => ({ login: vi.fn(), oauthLogin: vi.fn() }));
+const signIn = vi.fn();
+const signInWithOAuth = vi.fn();
+
+vi.mock("@/context/AuthContext", () => ({ useAuth: vi.fn() }));
 
 vi.mock("@/lib/oauth", async () => {
   const actual = await vi.importActual<typeof import("@/lib/oauth")>(
@@ -67,6 +70,14 @@ const makeUser = (role: AuthUser["role"]): AuthUser => ({
 describe("Login", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(useAuth).mockReturnValue({
+      user: null,
+      isLoading: false,
+      signIn,
+      signUp: vi.fn(),
+      signInWithOAuth,
+      signOut: vi.fn(),
+    });
   });
 
   it("blocks submission and shows an error when fields are empty", () => {
@@ -74,24 +85,24 @@ describe("Login", () => {
     fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
 
     expect(toast.error).toHaveBeenCalledWith("Please fill in all fields");
-    expect(login).not.toHaveBeenCalled();
+    expect(signIn).not.toHaveBeenCalled();
   });
 
   it("logs in a regular user and navigates home", async () => {
-    vi.mocked(login).mockResolvedValue(makeUser("user"));
+    signIn.mockResolvedValue(makeUser("user"));
     renderLogin();
     fillForm("test@example.com", "secret123");
     fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
 
     await waitFor(() => {
-      expect(login).toHaveBeenCalledWith("test@example.com", "secret123");
+      expect(signIn).toHaveBeenCalledWith("test@example.com", "secret123");
     });
     expect(toast.success).toHaveBeenCalledWith("Logged in successfully!");
     expect(mockNavigate).toHaveBeenCalledWith("/");
   });
 
   it("navigates admins to the admin area", async () => {
-    vi.mocked(login).mockResolvedValue(makeUser("admin"));
+    signIn.mockResolvedValue(makeUser("admin"));
     renderLogin();
     fillForm("admin@example.com", "secret123");
     fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
@@ -102,7 +113,7 @@ describe("Login", () => {
   });
 
   it("surfaces the API error message on failed login", async () => {
-    vi.mocked(login).mockRejectedValue(
+    signIn.mockRejectedValue(
       new ApiRequestError(401, "Invalid credentials"),
     );
     renderLogin();
@@ -116,7 +127,7 @@ describe("Login", () => {
   });
 
   it("shows a generic message for non-API errors", async () => {
-    vi.mocked(login).mockRejectedValue(new Error("boom"));
+    signIn.mockRejectedValue(new Error("boom"));
     renderLogin();
     fillForm("test@example.com", "secret123");
     fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
@@ -130,14 +141,14 @@ describe("Login", () => {
 
   it("completes Google sign-in: token -> oauthLogin -> navigate", async () => {
     vi.mocked(getGoogleIdToken).mockResolvedValue("google-id-token");
-    vi.mocked(oauthLogin).mockResolvedValue(makeUser("user"));
+    signInWithOAuth.mockResolvedValue(makeUser("user"));
     renderLogin();
     fireEvent.click(
       screen.getByRole("button", { name: /Continue with Google/i }),
     );
 
     await waitFor(() => {
-      expect(oauthLogin).toHaveBeenCalledWith("google", "google-id-token");
+      expect(signInWithOAuth).toHaveBeenCalledWith("google", "google-id-token");
     });
     expect(toast.success).toHaveBeenCalledWith("Logged in successfully!");
     expect(mockNavigate).toHaveBeenCalledWith("/");
@@ -145,14 +156,14 @@ describe("Login", () => {
 
   it("completes Apple sign-in: token -> oauthLogin -> navigate", async () => {
     vi.mocked(getAppleIdToken).mockResolvedValue("apple-id-token");
-    vi.mocked(oauthLogin).mockResolvedValue(makeUser("admin"));
+    signInWithOAuth.mockResolvedValue(makeUser("admin"));
     renderLogin();
     fireEvent.click(
       screen.getByRole("button", { name: /Continue with Apple/i }),
     );
 
     await waitFor(() => {
-      expect(oauthLogin).toHaveBeenCalledWith("apple", "apple-id-token");
+      expect(signInWithOAuth).toHaveBeenCalledWith("apple", "apple-id-token");
     });
     expect(mockNavigate).toHaveBeenCalledWith("/admin");
   });
@@ -171,13 +182,13 @@ describe("Login", () => {
         "Google sign-in is not configured for this app",
       );
     });
-    expect(oauthLogin).not.toHaveBeenCalled();
+    expect(signInWithOAuth).not.toHaveBeenCalled();
     expect(mockNavigate).not.toHaveBeenCalled();
   });
 
   it("surfaces a backend rejection of the provider token", async () => {
     vi.mocked(getGoogleIdToken).mockResolvedValue("google-id-token");
-    vi.mocked(oauthLogin).mockRejectedValue(
+    signInWithOAuth.mockRejectedValue(
       new ApiRequestError(401, "Invalid Google credential"),
     );
     renderLogin();
