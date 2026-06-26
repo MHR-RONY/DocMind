@@ -29,8 +29,22 @@ const userSchema = new Schema<IUserDocument>(
     },
     password: {
       type: String,
-      required: true,
+      // Optional: OAuth-only accounts (Google/Apple) have no local password.
+      required: false,
       select: false,
+    },
+    googleId: {
+      type: String,
+      select: false,
+      // sparse so multiple password-only users (no googleId) don't collide on null.
+      unique: true,
+      sparse: true,
+    },
+    appleId: {
+      type: String,
+      select: false,
+      unique: true,
+      sparse: true,
     },
     role: {
       type: String,
@@ -53,7 +67,8 @@ userSchema.pre('save', async function (
   this: IUserDocument,
   next: CallbackWithoutResultAndOptionalError
 ): Promise<void> {
-  if (!this.isModified('password')) {
+  // No-op for OAuth accounts (no password) or when the password is unchanged.
+  if (!this.isModified('password') || !this.password) {
     next();
     return;
   }
@@ -67,6 +82,10 @@ userSchema.methods.comparePassword = async function (
   this: IUserDocument,
   candidate: string
 ): Promise<boolean> {
+  // OAuth-only accounts have no local password; never authenticate them via password.
+  if (!this.password) {
+    return false;
+  }
   return bcrypt.compare(candidate, this.password);
 };
 

@@ -45,6 +45,17 @@ const envSchema = z.object({
     .string()
     .min(1, 'QDRANT_COLLECTION_NAME is required'),
 
+  // OAuth (optional). Endpoints return a clear 503 if their provider is unset,
+  // so the server still boots in environments without social login configured.
+  GOOGLE_CLIENT_ID: z.preprocess(
+    (v) => (v === '' ? undefined : v),
+    z.string().min(1).optional(),
+  ),
+  APPLE_CLIENT_ID: z.preprocess(
+    (v) => (v === '' ? undefined : v),
+    z.string().min(1).optional(),
+  ),
+
   RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive(),
   RATE_LIMIT_MAX: z.coerce.number().int().positive(),
 
@@ -102,6 +113,10 @@ export const config = {
     url: env.QDRANT_URL,
     apiKey: env.QDRANT_API_KEY,
     collectionName: env.QDRANT_COLLECTION_NAME,
+  },
+  oauth: {
+    googleClientId: env.GOOGLE_CLIENT_ID,
+    appleClientId: env.APPLE_CLIENT_ID,
   },
   rateLimit: {
     windowMs: env.RATE_LIMIT_WINDOW_MS,

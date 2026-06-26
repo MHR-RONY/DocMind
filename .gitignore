@@ -12,6 +12,11 @@ dist
 dist-ssr
 *.local
 
+# Env files — never commit secrets
+.env
+.env.*
+!.env.example
+
 # Non-pnpm lockfiles — pnpm only
 bun.lock
 bun.lockb
